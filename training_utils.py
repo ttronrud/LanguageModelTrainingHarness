@@ -92,17 +92,16 @@ def get_batch(fname = "train.bin", block_size = 1024, batch_size = 16, dev = "cp
 Karpathy's tokenizing mapped process
 """ 
 def process(example):
-    ids = enc.encode_ordinary(example['TEXT'])
+    ids = enc.encode_ordinary(example['text'])
     ids.append(enc.eot_token) 
     out =  {'ids': ids, 'len': len(ids)}
     return out
     
 """
 Karpathy's dataset generation code, functionized.
-Using gutenberg english texts instead of open web text
 """ 
-def generate_training_data(dset = "sedthh/gutenberg_english", senc = "gpt2", num_proc = 2,
-                            text_col = "TEXT", out_fname = "train.bin", overwrite = False):
+def generate_training_data(dset = "openwebtext", senc = "gpt2", num_proc = 2,
+                            text_col = "text", out_fname = "train.bin", overwrite = False):
     global enc
     
     # leave if data binary already exists
