@@ -2,7 +2,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from matplotlib.lines import Line2D
-from transformers import AutoTokenizer
 import tiktoken
 import os
 from tqdm import tqdm, trange
@@ -10,6 +9,8 @@ from datasets import load_dataset
 import math
 
 enc = None
+accesses = 0
+memmap = None
 
 """
 Great visualization of gradients through model layers, found from:
@@ -71,11 +72,15 @@ Karpathy's batch-fetching scheme
 I don't think it's optimal, since having to load a memmap every batch fetch
 is... Inelegant. There's definitely a better way to do this.
 """    
-def get_batch(fname = "train.bin", block_size = 1024, batch_size = 16, dev = "cpu"):
-    data_dir = ""
-    # We recreate np.memmap every batch to avoid a memory leak, as per
-    # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
-    data = np.memmap(os.path.join(data_dir, fname), dtype=np.uint16, mode='r')
+def get_batch(fname = "train.bin", num = 1, block_size = 1024, batch_size = 16, dev = "cpu", accesses_per_refresh = 10):
+    global memmap
+    
+    if num % accesses_per_refresh == 0 or memmap is None:
+        data_dir = ""
+        # We recreate np.memmap every batch to avoid a memory leak, as per
+        # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
+        memmap = np.memmap(os.path.join(data_dir, fname), dtype=np.uint16, mode='r')
+    data = memmap
         
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
@@ -87,6 +92,8 @@ def get_batch(fname = "train.bin", block_size = 1024, batch_size = 16, dev = "cp
         x,y = x.to(torch.device(dev)), y.to(torch.device(dev))
     return x,y
     
+    
+
     
 """
 Karpathy's tokenizing mapped process
@@ -108,9 +115,10 @@ def generate_training_data(dset = "openwebtext", senc = "gpt2", num_proc = 2,
     if os.path.isfile(out_fname) and overwrite == False:
         print(f"output file {out_fname} already exists. Set 'overwrite = True' to regenerate.")
         return
-    
+    if not os.path.exists("cache"):
+        os.mkdir("cache")
     enc = tiktoken.get_encoding("gpt2")
-    dataset = load_dataset(dset, num_proc=num_proc)
+    dataset = load_dataset(dset, num_proc=num_proc, cache_dir = "cache")
     # tokenize the dataset
     # added additional args to lower memory footprint
     tokenized = dataset.map(

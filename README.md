@@ -11,7 +11,7 @@ The primary goal was to investigate "one GPU in one day" (with the caveat that t
 ## Dependencies
 The notebook was developed in Python 3.11, with PyTorch 2.3.1, however there are unlikely to be breaking changes introduced in newer versions of these libraries, and it's even possible that performance improvements are introduced (particularly with new versions of FlashAttention). The minimal required environment can be installed with:
 ```
-pip install torch numpy datasets tiktoken wandb tqdm torchinfo notebooks ipywidgets
+pip install torch numpy matplotlib datasets tiktoken wandb tqdm torchinfo notebook ipywidgets
 ```
 with the latter two dependencies required for the notebook itself.
 

@@ -57,13 +57,13 @@ def train_control_setup():
     train_controls = interact(parseTrainOptions, 
                               showgradient = widgets.Checkbox(value = True, description = "Show Gradients"),
                               usewandb = widgets.Checkbox(value = False, description = "Use W&B"),
-                              learning_rate = widgets.FloatLogSlider(value = 6e-4, base = 10, min = -5, max = -2, step = 0.001, description = "Learning Rate", style=style, layout = widgets.Layout(width='50%')),
-                              weight_decay = widgets.FloatLogSlider(value = 1e-1, base = 10, min = -5, max = -1, step = 0.01, description = "Weight Decay", style=style, layout = widgets.Layout(width='50%')),
-                              batch_size = widgets.IntSlider(value = 16, min = 1, max = 64, description = "Batch Size", style=style, layout = widgets.Layout(width='50%')),
-                              grad_accum_steps = widgets.IntSlider(value = 30, min = 1, max = 128, description = "Gradient Accumulation Steps", style=style, layout = widgets.Layout(width='50%')),
-                              max_steps = widgets.IntSlider(value = 10000, min = 2500, max = 600000, description = "Training Steps", style=style, layout = widgets.Layout(width='50%')),
-                              checkpoint = widgets.IntSlider(value = 1000, min = 1, max = 10000, description = "Checkpoint Freq", style=style, layout = widgets.Layout(width='50%')),
-                              starting_point = widgets.Text(value = "", placeholder=  "ckpt9999.pth", description = "Load from checkpoint: ", style=style, layout = widgets.Layout(width='50%')),
+                              learning_rate = widgets.FloatLogSlider(value = 6e-4, base = 10, min = -5, max = -2, step = 0.001, description = "Learning Rate", style=style, layout = widgets.Layout(width='75%')),
+                              weight_decay = widgets.FloatLogSlider(value = 1e-1, base = 10, min = -5, max = -1, step = 0.01, description = "Weight Decay", style=style, layout = widgets.Layout(width='75%')),
+                              batch_size = widgets.IntSlider(value = 16, min = 1, max = 64, description = "Batch Size", style=style, layout = widgets.Layout(width='75%')),
+                              grad_accum_steps = widgets.IntSlider(value = 30, min = 1, max = 128, description = "Gradient Accumulation Steps", style=style, layout = widgets.Layout(width='75%')),
+                              max_steps = widgets.IntSlider(value = 10000, min = 2000, max = 600000, step=1000, description = "Training Steps", style=style, layout = widgets.Layout(width='75%')),
+                              checkpoint = widgets.IntSlider(value = 1000, min = 10, max = 10000, step=10, description = "Checkpoint Freq", style=style, layout = widgets.Layout(width='75%')),
+                              starting_point = widgets.Text(value = "", placeholder=  "ckpt9999.pth", description = "Load from checkpoint: ", style=style, layout = widgets.Layout(width='75%')),
                               )
         
         
