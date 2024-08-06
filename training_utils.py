@@ -134,7 +134,7 @@ def generate_training_data(dset = "HuggingFaceTB/smollm-corpus", dset_name = Non
         os.mkdir("cache")
     enc = tiktoken.get_encoding("gpt2")
     dataset = load_dataset(dset,dset_name, cache_dir = "cache", split = "train", streaming = True)
-    dataset = iter(DataLoader(dataset, num_workers = 16, batch_size = 1024))
+    dataset = iter(DataLoader(dataset, num_workers = 8, batch_size = 512))
     
     
     targtok = np.uint64(tokens_to_save)
