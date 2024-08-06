@@ -5,8 +5,10 @@ from matplotlib.lines import Line2D
 import tiktoken
 import os
 from tqdm import tqdm, trange
-from datasets import load_dataset
+from datasets import Dataset, load_dataset, concatenate_datasets
 import math
+from torch.utils.data import DataLoader
+from datasets.utils.logging import disable_progress_bar, enable_progress_bar
 
 enc = None
 accesses = 0
@@ -74,7 +76,12 @@ is... Inelegant. There's definitely a better way to do this.
 """    
 def get_batch(fname = "train.bin", num = 1, block_size = 1024, batch_size = 16, dev = "cpu", accesses_per_refresh = 10):
     global memmap
-    
+    """
+    Adapted to lower the number of accesses we make to the memory map before
+    we re-generate it. As you access more parts of one memmap, RAM usage increases,
+    so we're striking a balance between training speed/throughput and system memory
+    usage.
+    """
     if num % accesses_per_refresh == 0 or memmap is None:
         data_dir = ""
         # We recreate np.memmap every batch to avoid a memory leak, as per
@@ -105,12 +112,20 @@ def process(example):
     return out
     
 """
-Karpathy's dataset generation code, functionized.
+Creates a training data block - via numpy memmap, by streaming the target
+dataset in. Parallelizes download/tokenization/writing and minimizes RAM
+usage (or at least utilizes garbage collector effectively).
+
+We re-open the memmap periodically because one instance will use more and more
+RAM as it's accessed, up to the total block size. Refreshing the instance fixes this.
+
+Started w/Karpathy's scheme, but made significant changes to improve efficiency and speed
 """ 
-def generate_training_data(dset = "openwebtext", senc = "gpt2", num_proc = 2,
-                            text_col = "text", out_fname = "train.bin", overwrite = False):
+def generate_training_data(dset = "HuggingFaceTB/smollm-corpus", dset_name = None, senc = "gpt2", num_proc = 1,
+                            text_col = "text", out_fname = "train.bin", overwrite = False, tokens_to_save = 1e10):
     global enc
     
+    enable_progress_bar()
     # leave if data binary already exists
     if os.path.isfile(out_fname) and overwrite == False:
         print(f"output file {out_fname} already exists. Set 'overwrite = True' to regenerate.")
@@ -118,31 +133,49 @@ def generate_training_data(dset = "openwebtext", senc = "gpt2", num_proc = 2,
     if not os.path.exists("cache"):
         os.mkdir("cache")
     enc = tiktoken.get_encoding("gpt2")
-    dataset = load_dataset(dset, num_proc=num_proc, cache_dir = "cache")
-    # tokenize the dataset
-    # added additional args to lower memory footprint
-    tokenized = dataset.map(
-        process,
-        remove_columns=[text_col],
-        desc="tokenizing the splits",
-        num_proc=num_proc,
-        writer_batch_size = 100,
-        cache_file_names = {"train":"train.arrow"}
-    )
+    dataset = load_dataset(dset,dset_name, cache_dir = "cache", split = "train", streaming = True)
+    dataset = iter(DataLoader(dataset, num_workers = 16, batch_size = 1024))
     
-    # concatenate all the ids in each dataset into one large file we can use for training
-    for split, dset in tokenized.items():
-        arr_len = np.sum(dset['len'], dtype=np.uint64)
-        dtype = np.uint16 # (can do since enc.max_token_value == 50256 is < 2**16)
-        arr = np.memmap(out_fname, dtype=dtype, mode='w+', shape=(arr_len,))
-        total_batches = 1024
+    
+    targtok = np.uint64(tokens_to_save)
+    reopentok_inc = np.uint64(5e8)
+    reopentok = reopentok_inc
+    tot_tok = np.uint64(0)
+    running = True
+    
+    dtype = np.uint16 # (can do since enc.max_token_value == 50256 is < 2**16)
+    arr = np.memmap(out_fname, dtype=dtype, mode='w+', shape=(int(targtok),))
+    # have to disable progress bar here so terminal/cell isn't spammed
+    # AND THERE'S NO 'verbose=False' OPTION
+    disable_progress_bar()
+    with tqdm(desc="Tokens processed", total = targtok, position=0, leave=True) as pbar:
+        dsets = []
+        while running:
+            if tot_tok > reopentok:
+                arr = np.memmap(out_fname, dtype=dtype, mode='r+')
+                reopened = True
+                reopentok += reopentok_inc
 
-        idx = 0
-        for batch_idx in tqdm(range(total_batches), desc=f'writing {out_fname}'):
-            # Batch together samples for faster write
-            batch = dset.shard(num_shards=total_batches, index=batch_idx, contiguous=True).with_format('numpy')
-            arr_batch = np.concatenate(batch['ids'])
-            # Write into mmap
-            arr[idx : idx + len(arr_batch)] = arr_batch
-            idx += len(arr_batch)
-        arr.flush()
+            dat = Dataset.from_dict(next(dataset))
+            interim = dat.map(
+                process,
+                remove_columns=[text_col],
+                desc="tokenizing the splits",
+                num_proc=num_proc,
+                #writer_batch_size = 100,
+                #cache_file_names = {"train":"train.arrow"}
+            )
+            nu = np.sum(interim['len'], dtype=np.uint64)
+            if tot_tok + nu < targtok:
+                arr[tot_tok:tot_tok+nu] = np.concatenate(interim['ids'])
+            else:
+                arr[tot_tok:] = np.concatenate(interim['ids'])[:targtok - tot_tok]
+            arr.flush()
+            
+            tot_tok += nu
+            pbar.update(nu)
+            if tot_tok > targtok:
+                break
+        enable_progress_bar()
+    
+    arr.flush()
