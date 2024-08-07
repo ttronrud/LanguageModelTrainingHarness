@@ -15,6 +15,8 @@ pip install torch numpy matplotlib datasets tiktoken wandb tqdm torchinfo scikit
 ```
 with the latter two dependencies required for the notebook itself.
 
+This guide does not cover CUDA setup, which varies wildly based on your environment (e.g. WSL2, Linux, Windows, etc). If you're not running this in CUDA, you'll likely have a bad time.
+
 ## Usage
 The **LMHarness** notebook should be your primary entry-point, and is a full end-to-end foundational model training system. By default, execution through the notebook will result in a ~220M parameter LLama-3 style model, replete with RoPE, GQA, and gated FFNs. Through configuration, it's possible to not only vary the size, both "vertically" and "horizontally", but also the attention mechanism (raw MHA, MHA, GQA), positional embedding style (Absolute, Rotary, and "NoPE"), and Feed Forward style (both MLP and Gated MLP). 
 
