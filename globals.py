@@ -14,6 +14,7 @@ GRAD_ACCUM_STEPS = 30
 CHKPT_FREQ = 1000
 plotfreq = 10
 loadchkpt = None
+modelmegaparams = 220
 
 
 dev = "cpu"
@@ -59,13 +60,31 @@ def train_control_setup():
                               usewandb = widgets.Checkbox(value = False, description = "Use W&B"),
                               learning_rate = widgets.FloatLogSlider(value = 6e-4, base = 10, min = -5, max = -2, step = 0.001, description = "Learning Rate", style=style, layout = widgets.Layout(width='75%')),
                               weight_decay = widgets.FloatLogSlider(value = 1e-1, base = 10, min = -5, max = -1, step = 0.01, description = "Weight Decay", style=style, layout = widgets.Layout(width='75%')),
-                              batch_size = widgets.IntSlider(value = 16, min = 1, max = 64, description = "Batch Size", style=style, layout = widgets.Layout(width='75%')),
-                              grad_accum_steps = widgets.IntSlider(value = 30, min = 1, max = 128, description = "Gradient Accumulation Steps", style=style, layout = widgets.Layout(width='75%')),
+                              batch_size = widgets.IntSlider(value = BATCH_S, min = 1, max = 64, description = "Batch Size", style=style, layout = widgets.Layout(width='75%')),
+                              grad_accum_steps = widgets.IntSlider(value = GRAD_ACCUM_STEPS, min = 1, max = 128, description = "Gradient Accumulation Steps", style=style, layout = widgets.Layout(width='75%')),
                               max_steps = widgets.IntSlider(value = 10000, min = 2000, max = 600000, step=1000, description = "Training Steps", style=style, layout = widgets.Layout(width='75%')),
                               checkpoint = widgets.IntSlider(value = 1000, min = 10, max = 10000, step=10, description = "Checkpoint Freq", style=style, layout = widgets.Layout(width='75%')),
                               starting_point = widgets.Text(value = "", placeholder=  "ckpt9999.pth", description = "Load from checkpoint: ", style=style, layout = widgets.Layout(width='75%')),
                               )
-        
+
+def estimate_batch_size_globals(model_stats, target_tokens = 500000, tok_seq = 1024):
+    global dev
+    global BATCH_S
+    global GRAD_ACCUM_STEPS
+    
+    if "cuda" in dev:
+        max_mem = torch.cuda.mem_get_info()[0]
+    # try to estimate VRAM usage, scale back batch size and scale update
+    # accumulation steps to try to make it fit...
+    total_params = model_stats.total_param_bytes
+    input_bytes = model_stats.total_input
+    output_bytes = model_stats.total_output_bytes
+    total_bytes = total_params + input_bytes + output_bytes
+    
+    BATCH_S = int(max_mem/total_bytes)
+    
+    #next, how many batches do we need to run through to hit near target_tokens?
+    GRAD_ACCUM_STEPS = target_tokens/(BATCH_S * tok_seq)
         
 def get_train_controls():
     global train_controls
