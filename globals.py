@@ -1,6 +1,7 @@
 from ipywidgets import interact
 import ipywidgets as widgets
 import torch
+import psutil
 
 SHOW_GRADIENT = True
 USE_WANDB = False
@@ -74,6 +75,10 @@ def estimate_batch_size_globals(model_stats, target_tokens = 500000, tok_seq = 1
     
     if "cuda" in dev:
         max_mem = torch.cuda.mem_get_info()[0]
+    else:
+        meminf = psutil.virtual_memory()
+        max_mem = meminf.available
+        print(f"Using CPU and system RAM is *not* recommended for training. {max_mem} bytes available.")
     # try to estimate VRAM usage, scale back batch size and scale update
     # accumulation steps to try to make it fit...
     total_params = model_stats.total_param_bytes
