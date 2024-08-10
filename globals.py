@@ -61,13 +61,17 @@ def train_control_setup():
                               usewandb = widgets.Checkbox(value = False, description = "Use W&B"),
                               learning_rate = widgets.FloatLogSlider(value = 6e-4, base = 10, min = -5, max = -2, step = 0.001, description = "Learning Rate", style=style, layout = widgets.Layout(width='75%')),
                               weight_decay = widgets.FloatLogSlider(value = 1e-1, base = 10, min = -5, max = -1, step = 0.01, description = "Weight Decay", style=style, layout = widgets.Layout(width='75%')),
-                              batch_size = widgets.IntSlider(value = BATCH_S, min = 1, max = 64, description = "Batch Size", style=style, layout = widgets.Layout(width='75%')),
-                              grad_accum_steps = widgets.IntSlider(value = GRAD_ACCUM_STEPS, min = 1, max = 128, description = "Gradient Accumulation Steps", style=style, layout = widgets.Layout(width='75%')),
+                              batch_size = widgets.IntSlider(value = BATCH_S, min = 1, max = 4*BATCH_S, description = "Batch Size", style=style, layout = widgets.Layout(width='75%')),
+                              grad_accum_steps = widgets.IntSlider(value = GRAD_ACCUM_STEPS, min = 1, max = 2*GRAD_ACCUM_STEPS, description = "Gradient Accumulation Steps", style=style, layout = widgets.Layout(width='75%')),
                               max_steps = widgets.IntSlider(value = 10000, min = 2000, max = 600000, step=1000, description = "Training Steps", style=style, layout = widgets.Layout(width='75%')),
                               checkpoint = widgets.IntSlider(value = 1000, min = 10, max = 10000, step=10, description = "Checkpoint Freq", style=style, layout = widgets.Layout(width='75%')),
                               starting_point = widgets.Text(value = "", placeholder=  "ckpt9999.pth", description = "Load from checkpoint: ", style=style, layout = widgets.Layout(width='75%')),
                               )
-
+                              
+"""
+Guesstimate a batch size that won't exceed available VRAM
+using torchinfo stats, and targeting 500k tokens per backprop
+"""
 def estimate_batch_size_globals(model_stats, target_tokens = 500000, tok_seq = 1024):
     global dev
     global BATCH_S

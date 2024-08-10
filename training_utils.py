@@ -119,7 +119,11 @@ usage (or at least utilizes garbage collector effectively).
 We re-open the memmap periodically because one instance will use more and more
 RAM as it's accessed, up to the total block size. Refreshing the instance fixes this.
 
-Started w/Karpathy's scheme, but made significant changes to improve efficiency and speed
+Started w/Karpathy's scheme, but made significant changes:
+= uses streaming/iterable dataset interface to sidestep downloading
+  the entire thing
+= writes up to max tokens directly to memory mapped array as they come in
+= generalizes better across many datasets/dataset configurations
 """ 
 def generate_training_data(dset = "HuggingFaceTB/smollm-corpus", dset_name = None, senc = "gpt2", num_proc = 1,
                             text_col = "text", out_fname = "train.bin", overwrite = False, tokens_to_save = 1e10):
@@ -133,8 +137,10 @@ def generate_training_data(dset = "HuggingFaceTB/smollm-corpus", dset_name = Non
     if not os.path.exists("cache"):
         os.mkdir("cache")
     enc = tiktoken.get_encoding("gpt2")
-    dataset = load_dataset(dset,dset_name, cache_dir = "cache", split = "train", streaming = True)
-    dataset = iter(DataLoader(dataset, num_workers = 8, batch_size = 512))
+    dataset = load_dataset(dset,dset_name, cache_dir = "cache", split = "train", streaming = True, num_proc=8)
+    dataset = iter(DataLoader(dataset, num_workers = 8, batch_size = 512, 
+        collate_fn = lambda batch: default_collate([{"text":e.pop(text_col)} for e in batch])
+        ))
     
     
     targtok = np.uint64(tokens_to_save)
