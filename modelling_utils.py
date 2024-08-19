@@ -123,7 +123,7 @@ class Transformer(nn.Module):
         return optimizer
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, stop_tokens = []):
+    def generate(self, idx, max_new_tokens, temperature = 1.0, top_k = None, min_p = 0, stop_tokens = []):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
@@ -132,16 +132,27 @@ class Transformer(nn.Module):
         for _ in range(max_new_tokens):
             # forward the model to get the logits for the index in the sequence
             logits, _ = self(idx)
+            
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature
+            
             # optionally crop the logits to only the top k options
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
             # apply softmax to convert logits to (normalized) probabilities
             probs = F.softmax(logits, dim=-1)
+            
+            # optionally crop the least-probable logits based on the 
+            # scale of the most probable. "min-P" sampling strategy
+            if min_p > 0:
+                pmax, maxind = torch.max(probs, dim = -1)
+                pmin = min_p * pmax
+                for i,ps in enumerate(probs):
+                    probs[i,ps < pmin] = 0
+            
             # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1)
+            idx_next = torch.multinomial(probs, num_samples = 1)
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
             if idx_next in stop_tokens:
@@ -162,7 +173,8 @@ def prCyan(s): return "\033[96m {}\033[00m" .format(s)
 def prLightGray(s): return "\033[97m {}\033[00m" .format(s)
 def prBlack(s): return "\033[98m {}\033[00m" .format(s)
 
-def pretty_generate(instring, model, top_k = 50, gen_len = 200, seed = None, enc = "gpt2",genColFunc = prGreen, dev = "cpu"):
+def pretty_generate(instring, model, top_k = 50, min_p = 0, temperature = 1.0, gen_len = 200, 
+                    seed = None, enc = "gpt2",genColFunc = prGreen, dev = "cpu"):
     enc = tiktoken.get_encoding(enc)
     
     #Model expects shape of (batch_size, seq_len) so we need to use a view with batch_size of 1
@@ -176,7 +188,7 @@ def pretty_generate(instring, model, top_k = 50, gen_len = 200, seed = None, enc
         print(f"Generating with random seed {seed}")
     
     #Use the generate method to start writing tokens
-    out_tok = model.generate(intok, gen_len, top_k = top_k)
+    out_tok = model.generate(intok, gen_len, top_k = top_k, temperature = temperature, min_p = min_p)
     
     #move output off GPU, and slice off only newly generated text
     #tiktoken expects "flat" list, so we view it like that
