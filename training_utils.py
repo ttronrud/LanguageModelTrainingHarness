@@ -5,10 +5,12 @@ from matplotlib.lines import Line2D
 import tiktoken
 import os
 from tqdm import tqdm, trange
-from datasets import Dataset, load_dataset, concatenate_datasets
+from datasets import Dataset, load_dataset, concatenate_datasets, Features, Value
 import math
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, default_collate
 from datasets.utils.logging import disable_progress_bar, enable_progress_bar
+from datetime import datetime
+import json
 
 enc = None
 accesses = 0
@@ -110,7 +112,7 @@ def process(example):
     ids.append(enc.eot_token) 
     out =  {'ids': ids, 'len': len(ids)}
     return out
-    
+  
 """
 Creates a training data block - via numpy memmap, by streaming the target
 dataset in. Parallelizes download/tokenization/writing and minimizes RAM
@@ -119,11 +121,7 @@ usage (or at least utilizes garbage collector effectively).
 We re-open the memmap periodically because one instance will use more and more
 RAM as it's accessed, up to the total block size. Refreshing the instance fixes this.
 
-Started w/Karpathy's scheme, but made significant changes:
-= uses streaming/iterable dataset interface to sidestep downloading
-  the entire thing
-= writes up to max tokens directly to memory mapped array as they come in
-= generalizes better across many datasets/dataset configurations
+Started w/Karpathy's scheme, but made significant changes to improve efficiency and speed
 """ 
 def generate_training_data(dset = "HuggingFaceTB/smollm-corpus", dset_name = None, senc = "gpt2", num_proc = 1,
                             text_col = "text", out_fname = "train.bin", overwrite = False, tokens_to_save = 1e10):
@@ -136,7 +134,8 @@ def generate_training_data(dset = "HuggingFaceTB/smollm-corpus", dset_name = Non
         return
     if not os.path.exists("cache"):
         os.mkdir("cache")
-    enc = tiktoken.get_encoding("gpt2")
+    if enc is None:
+        enc = tiktoken.get_encoding("gpt2")
     dataset = load_dataset(dset,dset_name, cache_dir = "cache", split = "train", streaming = True)
     dataset = iter(DataLoader(dataset, num_workers = 8, batch_size = 512, 
         collate_fn = lambda batch: default_collate([{"text":e.pop(text_col)} for e in batch])
@@ -191,6 +190,8 @@ Operates the same as single-source training data generation
 method, however it incorporates set counts of tokens from
 multiple datasets, allowing for the construction of
 composite training files.
+Also includes support for locally-generated json datasets
+built with the "create_raw_text_dataset" method.
 """     
 def generate_training_data_mix(dset = ["HuggingFaceTB/smollm-corpus","togethercomputer/RedPajama-Data-1T"], 
                                dset_name = ["fineweb-edu-dedup", "arxiv"], 
@@ -207,7 +208,10 @@ def generate_training_data_mix(dset = ["HuggingFaceTB/smollm-corpus","togetherco
         return
     if not os.path.exists("cache"):
         os.mkdir("cache")
-    enc = tiktoken.get_encoding("gpt2")
+    
+    
+    if enc is None:
+        enc = tiktoken.get_encoding("gpt2")
     
     tot_tok = np.uint64(0)
     reopentok_inc = np.uint64(5e8)
@@ -218,11 +222,14 @@ def generate_training_data_mix(dset = ["HuggingFaceTB/smollm-corpus","togetherco
     arr = np.memmap(out_fname, dtype=dtype, mode='w+', shape=(int(end_tok),))
     
     for ds, ds_n, tc, ntok in zip(dset, dset_name, text_col, tokens_to_save):
-        dataset = load_dataset(ds,ds_n, cache_dir = "cache", split = "train", streaming = True)
+        if ds == "json":
+            dataset = load_dataset(ds,data_files = ds_n, cache_dir = "cache", split="train")
+        else:
+            dataset = load_dataset(ds,ds_n, cache_dir = "cache", split = "train", streaming = True)
+            
         dataset = iter(DataLoader(dataset, num_workers = 4, batch_size = 512, 
             collate_fn = lambda batch: default_collate([{"text":e.pop(tc)} for e in batch])
             ))
-    
     
         tot_tok_ds = np.uint64(0)
         targtok = np.uint64(ntok)
@@ -238,8 +245,12 @@ def generate_training_data_mix(dset = ["HuggingFaceTB/smollm-corpus","togetherco
                     arr = np.memmap(out_fname, dtype=dtype, mode='r+')
                     reopened = True
                     reopentok += reopentok_inc
-
-                dat = Dataset.from_dict(next(dataset))
+                try:
+                    dat = Dataset.from_dict(next(dataset))
+                except StopIteration: # end of data
+                    print(f"Ran out of text early for dataset {ds}>{ds_n}, moving on")
+                    break
+                    
                 interim = dat.map(
                     process,
                     remove_columns=[tc],
@@ -261,8 +272,62 @@ def generate_training_data_mix(dset = ["HuggingFaceTB/smollm-corpus","togetherco
                 tot_tok += nu
                 tot_tok_ds += nu
                 pbar.update(nu)
-                if tot_tok_ds > targtok:
+                if tot_tok_ds >= targtok:
                     break
             enable_progress_bar()
     
     arr.flush()
+
+'''
+Will create a new load-able json file from text documents stored in a directory
+tree.
+Folder structure can be used to create metadata for downstream filtering of
+document type, subject, etc.
+Expected directory structure for this is something like:
+[Top level target_dir]
+-   [Subject 1]
+    - [Subtopic 1]
+-   [Subject 2]
+    - [Subtopic 1]
+    - [Subtopic 2]
+It uses recursion to go arbitrarily deep into folder structures, which could
+use tons of RAM if you point it at something deep.
+'''
+def scrape_dir(target_dir, collect_metadata = False, recursive = True, classes = []):
+    global enc
+    if enc is None:
+        enc = tiktoken.get_encoding("gpt2")
+    
+    out = []
+    total_token_count = 0
+    
+    with os.scandir(target_dir) as dir_iter:
+        for entry in dir_iter:
+            if not entry.name.startswith('.') and entry.is_file():
+                with open(entry.path, 'r', encoding='utf-8', errors='ignore') as f:
+                
+                    entry_dict = {'text':f.read()}
+                    ntok = len(enc.encode_ordinary(entry_dict['text']))
+                    total_token_count += ntok
+                    
+                    if collect_metadata:
+                        entry_dict['meta'] = classes
+                        entry_dict['tok'] = ntok
+                        entry_dict['filename'] = entry.name
+                    
+                    out.append(entry_dict)
+            elif entry.is_dir():
+                add_out, toks = scrape_dir(entry.path, collect_metadata = collect_metadata, recursive = recursive, classes = classes+[entry.name])
+                out += add_out
+                total_token_count += toks
+    return out, total_token_count
+    
+def create_raw_text_dataset(target_dir, out_name = "data.json", collect_metadata = False, recursive = True):
+    if not os.path.exists(target_dir):
+        print(f"Path {target_dir} does not exist")
+    out, ntoks = scrape_dir(target_dir, collect_metadata, recursive)
+    
+    with open(out_name, 'w') as f:
+        f.write(json.dumps(out))
+    print(f"{out_name} written with {ntoks} tokens")
+    return ntoks
