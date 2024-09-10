@@ -72,7 +72,7 @@ def train_control_setup():
 Guesstimate a batch size that won't exceed available VRAM
 using torchinfo stats, and targeting 500k tokens per backprop
 """
-def estimate_batch_size_globals(model_stats, target_tokens = 500000, tok_seq = 1024):
+def estimate_batch_size_globals(model_stats, target_tokens = 500000, seq_len = 1024):
     global dev
     global BATCH_S
     global GRAD_ACCUM_STEPS
@@ -93,7 +93,7 @@ def estimate_batch_size_globals(model_stats, target_tokens = 500000, tok_seq = 1
     BATCH_S = int(max_mem/total_bytes)
     
     #next, how many batches do we need to run through to hit near target_tokens?
-    GRAD_ACCUM_STEPS = target_tokens/(BATCH_S * tok_seq)
+    GRAD_ACCUM_STEPS = target_tokens/(BATCH_S * seq_len)
         
 def get_train_controls():
     global train_controls

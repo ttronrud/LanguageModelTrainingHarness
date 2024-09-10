@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import inspect
 import tiktoken
+from ademamix import AdEMAMix
 
 def clean_class_name(st):
     return st.replace("__main__.","")
@@ -96,7 +97,7 @@ class Transformer(nn.Module):
     Karpathy's code to configure an optimizer (e.g. AdamW) for a model, to handle 
     weights and biases/layernorms differently.
     """
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type, use_adamw = False):
         # start with all of the candidate parameters
         param_dict = {pn: p for pn, p in self.named_parameters()}
         # filter out those that do not require grad
@@ -113,12 +114,23 @@ class Transformer(nn.Module):
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
         print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
         print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
-        # Create AdamW optimizer and use the fused version if it is available
-        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
-        use_fused = fused_available and 'cuda' in device_type
-        extra_args = dict(fused=True) if use_fused else dict()
-        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
-        print(f"using fused AdamW: {use_fused}")
+        
+        if use_adamw:
+            # AdamW optimizer - has conveniences like fused kernels and integrated support
+            
+            # Create AdamW optimizer and use the fused version if it is available
+            fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+            use_fused = fused_available and 'cuda' in device_type
+            extra_args = dict(fused=True) if use_fused else dict()
+            
+            optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
+            print(f"using AdamW - Fused: {use_fused}")
+        else:
+            # AdEMAMix optimizer - utilizes a third beta term to retain
+            # old gradients while also incorporating new gradient information
+            # to supposedly ~double training effectiveness
+            optimizer = AdEMAMix(optim_groups, lr=learning_rate, betas=betas)
+            print(f"using AdEMAMix")
 
         return optimizer
 
