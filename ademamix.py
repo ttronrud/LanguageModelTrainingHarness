@@ -1,3 +1,11 @@
+"""
+AdEMAMix optimizer from https://arxiv.org/abs/2409.03137
+
+GH repo: https://github.com/nanowell/AdEMAMix-Optimizer-Pytorch
+
+Utilizes an additional EMA term to retain older gradient information
+"""
+
 import math
 import torch
 from torch.optim import Optimizer
