@@ -97,7 +97,7 @@ class Transformer(nn.Module):
     Karpathy's code to configure an optimizer (e.g. AdamW) for a model, to handle 
     weights and biases/layernorms differently.
     """
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type, use_adamw = False):
+    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type, use_adamw = True):
         # start with all of the candidate parameters
         param_dict = {pn: p for pn, p in self.named_parameters()}
         # filter out those that do not require grad
@@ -126,6 +126,7 @@ class Transformer(nn.Module):
             optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
             print(f"using AdamW - Fused: {use_fused}")
         else:
+            assert len(betas) >= 3
             # AdEMAMix optimizer - utilizes a third beta term to retain
             # old gradients while also incorporating new gradient information
             # to supposedly ~double training effectiveness
