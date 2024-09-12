@@ -95,7 +95,13 @@ def estimate_batch_size_globals(model_stats, target_tokens = 500000, seq_len = 1
     if gradient_checkpointing:
         BATCH_S *= 2
     
-    BATCH_S = (BATCH_S//4 + 1)*4
+    # aim for multiple of 8 in micro-batch size
+    if BATCH_S >= 8:
+        BATCH_S = (BATCH_S//8 + (0 if BATCH_S%8==0 else 1))*8
+    elif BATCH_S >= 4:
+        BATCH_S = (BATCH_S//4 + (0 if BATCH_S%4==0 else 1))*4
+    elif BATCH_S > 1:
+        BATCH_S = (BATCH_S//2 + (0 if BATCH_S%2==0 else 1))*2    
         
     #next, how many batches do we need to run through to hit near target_tokens?
     GRAD_ACCUM_STEPS = target_tokens/(BATCH_S * seq_len)
