@@ -61,7 +61,7 @@ def train_control_setup():
                               usewandb = widgets.Checkbox(value = False, description = "Use W&B"),
                               learning_rate = widgets.FloatLogSlider(value = 6e-4, base = 10, min = -5, max = -2, step = 0.001, description = "Learning Rate", style=style, layout = widgets.Layout(width='75%')),
                               weight_decay = widgets.FloatLogSlider(value = 1e-1, base = 10, min = -5, max = -1, step = 0.01, description = "Weight Decay", style=style, layout = widgets.Layout(width='75%')),
-                              batch_size = widgets.IntSlider(value = BATCH_S, min = 1, max = 4*BATCH_S, description = "Batch Size", style=style, layout = widgets.Layout(width='75%')),
+                              batch_size = widgets.IntSlider(value = BATCH_S, min = 1, max = max(4*BATCH_S,1), description = "Batch Size", style=style, layout = widgets.Layout(width='75%')),
                               grad_accum_steps = widgets.IntSlider(value = GRAD_ACCUM_STEPS, min = 1, max = 2*GRAD_ACCUM_STEPS, description = "Gradient Accumulation Steps", style=style, layout = widgets.Layout(width='75%')),
                               max_steps = widgets.IntSlider(value = 10000, min = 2000, max = 600000, step=1000, description = "Training Steps", style=style, layout = widgets.Layout(width='75%')),
                               checkpoint = widgets.IntSlider(value = 1000, min = 10, max = 10000, step=10, description = "Checkpoint Freq", style=style, layout = widgets.Layout(width='75%')),
@@ -72,7 +72,7 @@ def train_control_setup():
 Guesstimate a batch size that won't exceed available VRAM
 using torchinfo stats, and targeting 500k tokens per backprop
 """
-def estimate_batch_size_globals(model_stats, target_tokens = 500000, seq_len = 1024, gradient_checkpointing = True):
+def estimate_batch_size_globals(model_stats, target_tokens = 500000, seq_len = 1024):
     global dev
     global BATCH_S
     global GRAD_ACCUM_STEPS
@@ -92,19 +92,8 @@ def estimate_batch_size_globals(model_stats, target_tokens = 500000, seq_len = 1
     
     BATCH_S = int(max_mem/total_bytes)
     
-    if gradient_checkpointing:
-        BATCH_S *= 2
-    
-    # aim for multiple of 8 in micro-batch size
-    if BATCH_S >= 8:
-        BATCH_S = (BATCH_S//8 + (0 if BATCH_S%8==0 else 1))*8
-    elif BATCH_S >= 4:
-        BATCH_S = (BATCH_S//4 + (0 if BATCH_S%4==0 else 1))*4
-    elif BATCH_S > 1:
-        BATCH_S = (BATCH_S//2 + (0 if BATCH_S%2==0 else 1))*2    
-        
     #next, how many batches do we need to run through to hit near target_tokens?
-    GRAD_ACCUM_STEPS = target_tokens/(BATCH_S * seq_len)
+    GRAD_ACCUM_STEPS = max(1,target_tokens/(BATCH_S * seq_len))
         
 def get_train_controls():
     global train_controls

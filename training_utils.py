@@ -164,7 +164,7 @@ def generate_training_data(dset = "HuggingFaceTB/smollm-corpus", dset_name = Non
             dat = Dataset.from_dict(next(dataset))
             interim = dat.map(
                 process,
-                remove_columns=[text_col],
+                remove_columns=["text"],
                 desc="tokenizing the splits",
                 num_proc=num_proc,
                 #writer_batch_size = 100,
@@ -190,17 +190,19 @@ Operates the same as single-source training data generation
 method, however it incorporates set counts of tokens from
 multiple datasets, allowing for the construction of
 composite training files.
-Also includes support for locally-generated json datasets
-built with the "create_raw_text_dataset" method.
 """     
 def generate_training_data_mix(dset = ["HuggingFaceTB/smollm-corpus","togethercomputer/RedPajama-Data-1T"], 
                                dset_name = ["fineweb-edu-dedup", "arxiv"], 
                                text_col = ["text", "text"],
+                               splits = [],
                                tokens_to_save = [1e10, 1e10],
+                               finished = None,
                                senc = "gpt2", num_proc = 1,
                                out_fname = "train.bin", overwrite = False):
     global enc
     
+    if finished == None:
+        finished = [False]*len(tokens_to_save)
     enable_progress_bar()
     # leave if data binary already exists
     if os.path.isfile(out_fname) and overwrite == False:
@@ -209,6 +211,8 @@ def generate_training_data_mix(dset = ["HuggingFaceTB/smollm-corpus","togetherco
     if not os.path.exists("cache"):
         os.mkdir("cache")
     
+    if len(splits) == 0:
+        splits = ["train"]*len(dset)
     
     if enc is None:
         enc = tiktoken.get_encoding("gpt2")
@@ -221,11 +225,16 @@ def generate_training_data_mix(dset = ["HuggingFaceTB/smollm-corpus","togetherco
     dtype = np.uint16 # (can do since enc.max_token_value == 50256 is < 2**16)
     arr = np.memmap(out_fname, dtype=dtype, mode='w+', shape=(int(end_tok),))
     
-    for ds, ds_n, tc, ntok in zip(dset, dset_name, text_col, tokens_to_save):
+    for ds, ds_n, tc, ntok, spl, fin in zip(dset, dset_name, text_col, tokens_to_save, splits, finished):
+        if fin:
+            #skip if already in file
+            tot_tok += ntok
+            pbar.update(ntok)
+            continue
         if ds == "json":
-            dataset = load_dataset(ds,data_files = ds_n, cache_dir = "cache", split="train")
+            dataset = load_dataset(ds,data_files = ds_n, cache_dir = "cache", split=spl)
         else:
-            dataset = load_dataset(ds,ds_n, cache_dir = "cache", split = "train", streaming = True)
+            dataset = load_dataset(ds,ds_n, cache_dir = "cache", split = spl, streaming = True)
             
         dataset = iter(DataLoader(dataset, num_workers = 4, batch_size = 512, 
             collate_fn = lambda batch: default_collate([{"text":e.pop(tc)} for e in batch])
@@ -248,12 +257,22 @@ def generate_training_data_mix(dset = ["HuggingFaceTB/smollm-corpus","togetherco
                 try:
                     dat = Dataset.from_dict(next(dataset))
                 except StopIteration: # end of data
-                    print(f"Ran out of text early for dataset {ds}>{ds_n}, moving on")
+                    print(f"Ran out of text early for dataset {ds}>{ds_n}, repeating and moving on")
+                    #get how many full iterations needed
+                    full_iter = targtok//tot_tok_ds-1
+                    rem = targtok%tot_tok_ds
+                    print(f"{full_iter} full copies + {rem} remaining tokens")
+                    for f in range(int(full_iter)):
+                        arr[tot_tok:tot_tok+tot_tok_ds] = arr[tot_tok - tot_tok_ds:tot_tok]
+                        tot_tok += tot_tok_ds
+                    if rem > 0:
+                        arr[tot_tok:tot_tok + rem] = arr[tot_tok - rem:tot_tok]
+                        tot_tok += rem
                     break
                     
                 interim = dat.map(
                     process,
-                    remove_columns=[tc],
+                    remove_columns=["text"],
                     desc="tokenizing the splits",
                     num_proc=num_proc
                 )
@@ -321,7 +340,13 @@ def scrape_dir(target_dir, collect_metadata = False, recursive = True, classes =
                 out += add_out
                 total_token_count += toks
     return out, total_token_count
-    
+
+'''
+This is the entry point to pre-tokenization raw data
+generation. It invokes the recursive method above, writes the final
+result to a file, and outputs the total number of tokens in the final
+dataset.
+'''
 def create_raw_text_dataset(target_dir, out_name = "data.json", collect_metadata = False, recursive = True):
     if not os.path.exists(target_dir):
         print(f"Path {target_dir} does not exist")
